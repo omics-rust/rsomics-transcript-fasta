@@ -175,3 +175,58 @@ fn w_nocds_flag_suppresses_the_cds_defline_tag() {
     let w = run_w_nocds("multistop.gff3", "multistop_genome.fa");
     assert_matches_golden(&w, "multistop.w.nocds.expected");
 }
+
+#[test]
+fn childless_transcript_gets_synthesized_exon() {
+    // gffread emits a transcript with no exon/CDS children as a single exon
+    // spanning the transcript record itself.
+    let dir = scratch();
+    let g = dir.path().join("g.fa");
+    std::fs::write(&g, ">chr1\nACGTACGTACGTACGTACGTACGTACGTAC\n").unwrap();
+    let gff = dir.path().join("a.gff3");
+    std::fs::write(&gff, "chr1\tsrc\tmRNA\t1\t30\t.\t+\t.\tID=t1\n").unwrap();
+    let w = dir.path().join("w.fa");
+    let cfg = ExtractConfig {
+        want_w: true,
+        ..Default::default()
+    };
+    extract(
+        gff.to_str().unwrap(),
+        &g,
+        &cfg,
+        Some(Box::new(File::create(&w).unwrap())),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&w).unwrap(),
+        ">t1\nACGTACGTACGTACGTACGTACGTACGTAC\n"
+    );
+}
+
+#[test]
+fn feature_beyond_chromosome_length_is_a_hard_error() {
+    let dir = scratch();
+    let g = dir.path().join("g.fa");
+    std::fs::write(&g, ">chr1\nACGTACGTAC\n").unwrap();
+    let gff = dir.path().join("a.gff3");
+    std::fs::write(
+        &gff,
+        "chr1\tsrc\tmRNA\t1\t50\t.\t+\t.\tID=t1\nchr1\tsrc\texon\t1\t50\t.\t+\t.\tParent=t1\n",
+    )
+    .unwrap();
+    let cfg = ExtractConfig {
+        want_w: true,
+        ..Default::default()
+    };
+    let r = extract(
+        gff.to_str().unwrap(),
+        &g,
+        &cfg,
+        Some(Box::new(File::create(dir.path().join("w.fa")).unwrap())),
+        None,
+        None,
+    );
+    assert!(r.is_err());
+}

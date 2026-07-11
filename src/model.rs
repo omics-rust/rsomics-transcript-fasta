@@ -140,7 +140,7 @@ pub fn load(input: &str) -> Result<Vec<Transcript>> {
         if raw_line.is_empty() || raw_line.starts_with('#') {
             continue;
         }
-        let Some(line) = gff::parse_line(&raw_line) else {
+        let Some(line) = gff::parse_line(&raw_line)? else {
             continue;
         };
         match gff::classify(line.ftype) {
@@ -208,44 +208,54 @@ pub fn load(input: &str) -> Result<Vec<Transcript>> {
         .map(|(i, s)| (s.as_str(), i))
         .collect();
 
-    let mut transcripts: Vec<Transcript> = order
-        .into_iter()
-        .filter_map(|id| {
-            let b = by_id.remove(&id)?;
-            let exons = if b.exons.is_empty() {
-                merge_intervals(b.cds_segments.iter().map(|&(s, e, _)| (s, e)).collect())
+    let mut transcripts: Vec<Transcript> = Vec::with_capacity(order.len());
+    for id in order {
+        let Some(b) = by_id.remove(&id) else {
+            continue;
+        };
+        // gffread synthesizes one exon spanning a transcript that has neither
+        // exon nor CDS children, rather than dropping it.
+        let exons = if !b.exons.is_empty() {
+            merge_intervals(b.exons)
+        } else if !b.cds_segments.is_empty() {
+            merge_intervals(b.cds_segments.iter().map(|&(s, e, _)| (s, e)).collect())
+        } else {
+            vec![(b.start, b.end)]
+        };
+        let cds_window = if b.cds_segments.is_empty() {
+            None
+        } else {
+            let cds_start = b.cds_segments.iter().map(|&(s, _, _)| s).min().unwrap();
+            let cds_end = b.cds_segments.iter().map(|&(_, e, _)| e).max().unwrap();
+            let phase = boundary_phase(&b.cds_segments, b.strand) as u64;
+            let window = if b.strand == b'-' {
+                (cds_start, cds_end.saturating_sub(phase))
             } else {
-                merge_intervals(b.exons)
+                (cds_start + phase, cds_end)
             };
-            let cds_window = if b.cds_segments.is_empty() {
-                None
-            } else {
-                let cds_start = b.cds_segments.iter().map(|&(s, _, _)| s).min().unwrap();
-                let cds_end = b.cds_segments.iter().map(|&(_, e, _)| e).max().unwrap();
-                let phase = boundary_phase(&b.cds_segments, b.strand) as u64;
-                let window = if b.strand == b'-' {
-                    (cds_start, cds_end.saturating_sub(phase))
-                } else {
-                    (cds_start + phase, cds_end)
-                };
-                Some(window)
-            };
-            Some(Transcript {
-                id,
-                seqid: b.seqid,
-                strand: b.strand,
-                start: b.start,
-                exons,
-                cds_window,
-            })
-        })
-        .collect();
+            if window.0 > window.1 {
+                return Err(RsomicsError::InvalidInput(format!(
+                    "transcript {id}: CDS phase {phase} inverts the coding window on {}",
+                    b.seqid
+                )));
+            }
+            Some(window)
+        };
+        transcripts.push(Transcript {
+            id,
+            seqid: b.seqid,
+            strand: b.strand,
+            start: b.start,
+            exons,
+            cds_window,
+        });
+    }
 
     transcripts.sort_by_key(|t| {
         let rank = seqid_rank
             .get(t.seqid.as_str())
             .copied()
-            .unwrap_or(usize::MAX);
+            .expect("every transcript's seqid is recorded when its Building is created");
         (rank, t.start)
     });
 

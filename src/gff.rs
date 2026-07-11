@@ -4,6 +4,8 @@
 //! both GFF3's `key=value` and GTF's `key "value"` syntax on the same line
 //! (matches gffread's own content-sniffed, not extension-gated, detection).
 
+use rsomics_common::{Result, RsomicsError};
+
 pub struct Line<'a> {
     pub seqid: &'a str,
     pub ftype: &'a str,
@@ -19,23 +21,50 @@ pub struct Line<'a> {
 /// stray whitespace) rather than failing the whole file over one blemish —
 /// upstream is similarly tolerant of blank/short lines interleaved in
 /// otherwise-valid GFF/GTF.
-pub fn parse_line(line: &str) -> Option<Line<'_>> {
+pub fn parse_line(line: &str) -> Result<Option<Line<'_>>> {
     let mut cols = line.splitn(9, '\t');
-    let seqid = cols.next()?;
-    let _source = cols.next()?;
-    let ftype = cols.next()?;
-    let start: u64 = cols.next()?.parse().ok()?;
-    let end: u64 = cols.next()?.parse().ok()?;
-    let _score = cols.next()?;
-    let strand = cols.next()?.as_bytes().first().copied()?;
-    let phase = cols.next()?.as_bytes().first().copied()?;
+    let (
+        Some(seqid),
+        Some(_source),
+        Some(ftype),
+        Some(start_col),
+        Some(end_col),
+        Some(_score),
+        Some(strand_col),
+        Some(phase_col),
+    ) = (
+        cols.next(),
+        cols.next(),
+        cols.next(),
+        cols.next(),
+        cols.next(),
+        cols.next(),
+        cols.next(),
+        cols.next(),
+    )
+    else {
+        return Ok(None);
+    };
     let attrs = cols.next().unwrap_or("");
+    let coord = |col: &str, which: &str| -> Result<u64> {
+        col.parse().map_err(|_| {
+            RsomicsError::InvalidInput(format!("GFF/GTF {which} column is not an integer: {col:?}"))
+        })
+    };
+    let start = coord(start_col, "start")?;
+    let end = coord(end_col, "end")?;
+    let (Some(strand), Some(phase)) = (
+        strand_col.as_bytes().first().copied(),
+        phase_col.as_bytes().first().copied(),
+    ) else {
+        return Ok(None);
+    };
     let (start, end) = if start <= end {
         (start, end)
     } else {
         (end, start)
     };
-    Some(Line {
+    Ok(Some(Line {
         seqid,
         ftype,
         start,
@@ -43,7 +72,7 @@ pub fn parse_line(line: &str) -> Option<Line<'_>> {
         strand,
         phase,
         attrs,
-    })
+    }))
 }
 
 /// Iterate `(key, value)` pairs from a raw attribute column, transparently
@@ -124,7 +153,9 @@ mod tests {
 
     #[test]
     fn parses_gff3_style() {
-        let l = parse_line("chr1\tsrc\tCDS\t10\t20\t.\t+\t0\tID=c1;Parent=t1").unwrap();
+        let l = parse_line("chr1\tsrc\tCDS\t10\t20\t.\t+\t0\tID=c1;Parent=t1")
+            .unwrap()
+            .unwrap();
         assert_eq!(l.seqid, "chr1");
         assert_eq!(l.ftype, "CDS");
         assert_eq!(l.start, 10);
@@ -138,6 +169,7 @@ mod tests {
     fn parses_gtf_style() {
         let l =
             parse_line("chr1\tsrc\texon\t10\t20\t.\t-\t.\tgene_id \"g1\"; transcript_id \"t1\";")
+                .unwrap()
                 .unwrap();
         assert_eq!(get_attr(l.attrs, "transcript_id"), Some("t1"));
         assert_eq!(get_attr(l.attrs, "gene_id"), Some("g1"));
@@ -145,8 +177,20 @@ mod tests {
 
     #[test]
     fn swaps_inverted_coords() {
-        let l = parse_line("chr1\tsrc\texon\t20\t10\t.\t+\t.\t.").unwrap();
+        let l = parse_line("chr1\tsrc\texon\t20\t10\t.\t+\t.\t.")
+            .unwrap()
+            .unwrap();
         assert_eq!((l.start, l.end), (10, 20));
+    }
+
+    #[test]
+    fn non_numeric_coordinate_is_a_hard_error() {
+        assert!(parse_line("chr1\tsrc\texon\tABC\t20\t.\t+\t.\t.").is_err());
+    }
+
+    #[test]
+    fn short_line_is_skipped_not_errored() {
+        assert!(matches!(parse_line("only\ttwo"), Ok(None)));
     }
 
     #[test]

@@ -64,6 +64,16 @@ pub fn extract(
             ))
         })?;
 
+        let chrom_len = chrom_seq.len() as u64;
+        if let Some(&(_, last_end)) = t.exons.last()
+            && last_end > chrom_len
+        {
+            return Err(RsomicsError::InvalidInput(format!(
+                "transcript {}: feature end {last_end} exceeds chromosome {} length ({chrom_len} bp)",
+                t.id, t.seqid
+            )));
+        }
+
         if let Some(w) = w_out.as_deref_mut() {
             let full_span = (t.exons[0].0, t.exons[t.exons.len() - 1].1);
             let (spliced, cds_local) =
