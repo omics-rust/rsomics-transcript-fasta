@@ -1,0 +1,4 @@
+chr1	t	exon	15	32	.	+	.	gene_id "g1"; transcript_id "t1";
+chr1	t	CDS	15	29	.	+	0	gene_id "g1"; transcript_id "t1";
+chr1	t	start_codon	15	17	.	+	0	gene_id "g1"; transcript_id "t1";
+chr1	t	stop_codon	30	32	.	+	0	gene_id "g1"; transcript_id "t1";

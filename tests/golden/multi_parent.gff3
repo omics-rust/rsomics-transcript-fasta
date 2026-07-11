@@ -1,0 +1,9 @@
+##gff-version 3
+chr1	t	gene	12	29	.	+	.	ID=g1
+chr1	t	mRNA	12	29	.	+	.	ID=t1;Parent=g1
+chr1	t	mRNA	12	38	.	+	.	ID=t2;Parent=g1
+chr1	t	exon	12	29	.	+	.	Parent=t1,t2
+chr1	t	exon	35	38	.	+	.	Parent=t2
+chr1	t	CDS	12	29	.	+	0	Parent=t1
+chr1	t	CDS	12	29	.	+	0	Parent=t2
+chr1	t	CDS	35	38	.	+	2	Parent=t2
